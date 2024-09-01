@@ -3,6 +3,7 @@ package cnn
 import (
 	"fmt"
 	"runtime"
+	"sync"
 
 	"bufio"
 	"log"
@@ -27,7 +28,7 @@ func ResNetCifar10(layerNum int, imageID int) {
 	}
 	// load inference image
 	var file *os.File
-	file, err := os.Open("/home/user/testFile/test_values.txt")
+	file, err := os.Open("testFiles/test_values.txt")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -39,7 +40,7 @@ func ResNetCifar10(layerNum int, imageID int) {
 
 	//result file init
 	var result_file *os.File
-	result_file, _ = os.Create("../result/resnet" + strconv.Itoa(layerNum) + "_cifar10_label" + strconv.Itoa(imageID) + ".txt")
+	result_file, _ = os.Create("result/resnet" + strconv.Itoa(layerNum) + "_cifar10_label" + strconv.Itoa(imageID) + ".txt")
 	outShare := bufio.NewWriter(result_file)
 	_ = outShare
 	fmt.Println("Resnet-CKKS result name: ", result_file.Name())
@@ -69,21 +70,53 @@ func ResNetCifar10(layerNum int, imageID int) {
 		panic(err)
 	}
 	fmt.Println("bootstrapping parameter init end")
-
 	// generate keys
+	//fmt.Println("generate keys")
+	//keytime := time.Now()
 	kgen := rlwe.NewKeyGenerator(params)
 	sk := kgen.GenSecretKeyNew()
 	pk := kgen.GenPublicKeyNew(sk)
-	//Todo : temp rotation keys
-	convRot := []int{0, 1, 2, 3, 4, 5, 6}
+	// generate keys - Rotating key
+	convRot := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33,
+		34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
+		56, 57, 58, 59, 60, 61, 62, 63, 64, 66, 84, 124, 128, 132, 256, 512, 959, 960, 990, 991, 1008,
+		1023, 1024, 1036, 1064, 1092, 1952, 1982, 1983, 2016, 2044, 2047, 2048, 2072, 2078, 2100, 3007, 3024, 3040, 3052, 3070, 3071, 3072, 3080, 3108, 4031,
+		4032, 4062, 4063, 4095, 4096, 5023, 5024, 5054, 5055, 5087, 5118, 5119, 5120, 6047, 6078, 6079, 6111, 6112, 6142, 6143, 6144, 7071, 7102, 7103, 7135,
+		7166, 7167, 7168, 8095, 8126, 8127, 8159, 8190, 8191, 8192, 9149, 9183, 9184, 9213, 9215, 9216, 10173, 10207, 10208, 10237, 10239, 10240, 11197, 11231,
+		11232, 11261, 11263, 11264, 12221, 12255, 12256, 12285, 12287, 12288, 13214, 13216, 13246, 13278, 13279, 13280, 13310, 13311, 13312, 14238, 14240,
+		14270, 14302, 14303, 14304, 14334, 14335, 15262, 15264, 15294, 15326, 15327, 15328, 15358, 15359, 15360, 16286, 16288, 16318, 16350, 16351, 16352,
+		16382, 16383, 16384, 17311, 17375, 18335, 18399, 18432, 19359, 19423, 20383, 20447, 20480, 21405, 21406, 21437, 21469, 21470, 21471, 21501, 21504,
+		22429, 22430, 22461, 22493, 22494, 22495, 22525, 22528, 23453, 23454, 23485, 23517, 23518, 23519, 23549, 24477, 24478, 24509, 24541, 24542, 24543,
+		24573, 24576, 25501, 25565, 25568, 25600, 26525, 26589, 26592, 26624, 27549, 27613, 27616, 27648, 28573, 28637, 28640, 28672, 29600, 29632, 29664,
+		29696, 30624, 30656, 30688, 30720, 31648, 31680, 31712, 31743, 31744, 31774, 32636, 32640, 32644, 32672, 32702, 32704, 32706, 32735,
+		32736, 32737, 32759, 32760, 32761, 32762, 32763, 32764, 32765, 32766, 32767}
 	galEls := make([]uint64, len(convRot))
 	for i, x := range convRot {
 		galEls[i] = params.GaloisElement(x)
 	}
+	//ellapse := time.Since(keytime)
+	//fmt.Printf("GaloisElement time end : %s\n", ellapse)
+
 	rlk := kgen.GenRelinearizationKeyNew(sk)
-	rtk := kgen.GenGaloisKeysNew(galEls, sk)
+	var rtk []*rlwe.GaloisKey = make([]*rlwe.GaloisKey, len(galEls))
+	var wg sync.WaitGroup
+	wg.Add(len(galEls))
+	for i := range galEls {
+		i := i
+
+		go func() {
+			defer wg.Done()
+			kgen_ := rlwe.NewKeyGenerator(params)
+			rtk[i] = kgen_.GenGaloisKeyNew(galEls[i], sk)
+		}()
+	}
+	wg.Wait()
+	//rtk = kgen.GenGaloisKeysNew(galEls, sk)
 	evk := rlwe.NewMemEvaluationKeySet(rlk, rtk...)
-	fmt.Println("generate key end")
+	fmt.Println(evk.GaloisKeys)
+	//ellapse = time.Since(keytime)
+	//fmt.Println("generate key end")
+	//fmt.Printf("time end : %s\n", ellapse)
 
 	//generate -or/er
 	encryptor := rlwe.NewEncryptor(params, pk)
@@ -132,10 +165,26 @@ func ResNetCifar10(layerNum int, imageID int) {
 		image[i] /= B
 	}
 	context := NewContext(encoder, encryptor, decryptor, sk, pk, btp14, btp13, btp12, rtk, rlk, evaluator, &params)
+
+	value := make([]complex128, n)
+	for i := range value {
+		if i < 100 {
+			value[i] = complex(float64(i), 0)
+		} else {
+			value[i] = complex(0, 0)
+		}
+	}
+	plaintext := hefloat.NewPlaintext(params, 16)
+	encoder.Encode(value, plaintext)
+	cipher, _ := encryptor.EncryptNew(plaintext)
+	ct := sumSlot(cipher, 6, 1, context)
+	DecryptPrint(params, ct, *decryptor, *encoder)
+
 	cnn := NewTensorCipherFormData(1, 32, 32, 3, 3, init_p, logn, image, context)
-	_ = cnn
 	fmt.Println("preprocess & encrypt inference image end")
 
+	cnn = compactGappedConvolution(cnn, co, st, fh, fw, convWgt[0], bnVar[0], bnWgt[0], epsilon, context)
+	_ = cnn
 }
 
 func ImportParametersCifar10(layerNum int) (linwgt []float64, linbias []float64, convwgt [][]float64, bnbias [][]float64, bnmean [][]float64, bnvar [][]float64, bnwgt [][]float64, endNum int) {
@@ -189,7 +238,7 @@ func ImportParametersCifar10(layerNum int) (linwgt []float64, linbias []float64,
 	// convolution parameters
 	ci = 3
 	co = 16
-	ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/conv1_weight.txt", convwgt, fh*fw*ci*co, num_c)
+	ReadLinesIdx("pretrained_parameters/"+dir+"/conv1_weight.txt", convwgt, fh*fw*ci*co, num_c)
 	num_c++
 
 	// convolution parameters
@@ -212,7 +261,7 @@ func ImportParametersCifar10(layerNum int) (linwgt []float64, linbias []float64,
 			} else {
 				ci = 64
 			}
-			ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_conv1_weight.txt", convwgt, fh*fw*ci*co, num_c)
+			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_conv1_weight.txt", convwgt, fh*fw*ci*co, num_c)
 			num_c++
 
 			// ci setting
@@ -223,20 +272,20 @@ func ImportParametersCifar10(layerNum int) (linwgt []float64, linbias []float64,
 			} else if j == 3 {
 				ci = 64
 			}
-			ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_conv2_weight.txt", convwgt, fh*fw*ci*co, num_c)
+			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_conv2_weight.txt", convwgt, fh*fw*ci*co, num_c)
 			num_c++
 		}
 	}
 
 	// batch_normalization parameters
 	ci = 16
-	ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/bn1_bias.txt", bnbias, ci, num_b)
+	ReadLinesIdx("pretrained_parameters/"+dir+"/bn1_bias.txt", bnbias, ci, num_b)
 	num_b++
-	ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/bn1_running_mean.txt", bnmean, ci, num_m)
+	ReadLinesIdx("pretrained_parameters/"+dir+"/bn1_running_mean.txt", bnmean, ci, num_m)
 	num_m++
-	ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/bn1_running_var.txt", bnvar, ci, num_v)
+	ReadLinesIdx("pretrained_parameters/"+dir+"/bn1_running_var.txt", bnvar, ci, num_v)
 	num_v++
-	ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/bn1_weight.txt", bnwgt, ci, num_w)
+	ReadLinesIdx("pretrained_parameters/"+dir+"/bn1_weight.txt", bnwgt, ci, num_w)
 	num_w++
 
 	// batch_normalization parameters
@@ -250,33 +299,33 @@ func ImportParametersCifar10(layerNum int) (linwgt []float64, linbias []float64,
 		}
 
 		for k := 0; k <= endNum; k++ {
-			ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_bias.txt", bnbias, ci, num_b)
+			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_bias.txt", bnbias, ci, num_b)
 			num_b++
-			ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_running_mean.txt", bnmean, ci, num_m)
+			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_running_mean.txt", bnmean, ci, num_m)
 			num_m++
-			ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_running_var.txt", bnvar, ci, num_v)
+			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_running_var.txt", bnvar, ci, num_v)
 			num_v++
-			ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_weight.txt", bnwgt, ci, num_w)
+			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_weight.txt", bnwgt, ci, num_w)
 			num_w++
-			ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_bias.txt", bnbias, ci, num_b)
+			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_bias.txt", bnbias, ci, num_b)
 			num_b++
-			ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_running_mean.txt", bnmean, ci, num_m)
+			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_running_mean.txt", bnmean, ci, num_m)
 			num_m++
-			ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_running_var.txt", bnvar, ci, num_v)
+			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_running_var.txt", bnvar, ci, num_v)
 			num_v++
-			ReadLinesIdx("../../../../../../../pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_weight.txt", bnwgt, ci, num_w)
+			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_weight.txt", bnwgt, ci, num_w)
 			num_w++
 		}
 	}
 	// FC layer
-	file, err := os.Open("../../../../../../../pretrained_parameters/" + dir + "/linear_weight.txt")
+	file, err := os.Open("pretrained_parameters/" + dir + "/linear_weight.txt")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer file.Close()
 	in := bufio.NewScanner(file)
 	linwgt = ReadLines(in, linwgt, 10*64)
-	file, err = os.Open("../../../../../../../pretrained_parameters/" + dir + "/linear_bias.txt")
+	file, err = os.Open("pretrained_parameters/" + dir + "/linear_bias.txt")
 	if err != nil {
 		log.Fatal(err)
 	}

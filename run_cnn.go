@@ -7,11 +7,11 @@ import (
 )
 
 func main() {
-	var layerNum, startImageID int
+	//var layerNum, startImageID int
 
 	fmt.Print("Layer Num(20) : ")
-	fmt.Scan(&layerNum)
+	//fmt.Scan(&layerNum)
 	fmt.Print("Start image ID: ")
-	fmt.Scanln(&startImageID)
-	cnn.ResNetCifar10(layerNum, startImageID)
+	//fmt.Scanln(&startImageID)
+	cnn.ResNetCifar10(20, 0)
 }
