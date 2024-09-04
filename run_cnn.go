@@ -13,5 +13,5 @@ func main() {
 	//fmt.Scan(&layerNum)
 	fmt.Print("Start image ID: ")
 	//fmt.Scanln(&startImageID)
-	cnn.ResNetCifar10(20, 0)
+	cnn.ResNetCifar10(20, 2)
 }

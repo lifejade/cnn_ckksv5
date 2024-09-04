@@ -2,6 +2,7 @@ package cnn
 
 import (
 	"fmt"
+	"math/big"
 	"runtime"
 	"sync"
 
@@ -69,6 +70,8 @@ func ResNetCifar10(layerNum int, imageID int) {
 	if err != nil {
 		panic(err)
 	}
+	btpParams12.SlotsToCoeffsParameters.Scaling, btpParams13.SlotsToCoeffsParameters.Scaling,
+		btpParams14.SlotsToCoeffsParameters.Scaling = new(big.Float).SetFloat64(0.5), new(big.Float).SetFloat64(0.5), new(big.Float).SetFloat64(0.5)
 	fmt.Println("bootstrapping parameter init end")
 	// generate keys
 	//fmt.Println("generate keys")
@@ -128,13 +131,24 @@ func ResNetCifar10(layerNum int, imageID int) {
 	_, _, _, _ = encryptor, decryptor, encoder, evaluator
 
 	//generate bootstrapper
-	btpevk14, _, _ := btpParams14.GenEvaluationKeys(sk)
-	btp14, _ := bootstrapping.NewEvaluator(btpParams14, btpevk14)
-	btpevk13, _, _ := btpParams13.GenEvaluationKeys(sk)
-	btp13, _ := bootstrapping.NewEvaluator(btpParams13, btpevk13)
-	btpevk12, _, _ := btpParams12.GenEvaluationKeys(sk)
-	btp12, _ := bootstrapping.NewEvaluator(btpParams12, btpevk12)
-	_, _, _ = btp14, btp13, btp12
+	wg.Add(3)
+	var btp14, btp13, btp12 *bootstrapping.Evaluator
+	go func() {
+		defer wg.Done()
+		btpevk14, _, _ := btpParams14.GenEvaluationKeys(sk)
+		btp14, _ = bootstrapping.NewEvaluator(btpParams14, btpevk14)
+	}()
+	go func() {
+		defer wg.Done()
+		btpevk13, _, _ := btpParams13.GenEvaluationKeys(sk)
+		btp13, _ = bootstrapping.NewEvaluator(btpParams13, btpevk13)
+	}()
+	go func() {
+		defer wg.Done()
+		btpevk12, _, _ := btpParams12.GenEvaluationKeys(sk)
+		btp12, _ = bootstrapping.NewEvaluator(btpParams12, btpevk12)
+	}()
+	wg.Wait()
 
 	fmt.Println("generated bootstrapper end")
 
@@ -149,10 +163,7 @@ func ResNetCifar10(layerNum int, imageID int) {
 	epsilon := 0.00001
 	B := 40.0
 	linWgt, linBias, convWgt, bnBias, bnMean, bnVar, bnWgt, endNum := ImportParametersCifar10(layerNum)
-	_, _, _, _ = co, st, fh, fw
-	_, _ = logp, logq
-	_, _ = stage, epsilon
-	_, _, _, _, _, _, _, _ = linWgt, linBias, convWgt, bnBias, bnMean, bnVar, bnWgt, endNum
+	_, _, _, _, _, _, _ = co, st, logp, logq, linWgt, linBias, endNum
 
 	//preprocess inference image
 	for len(image) < n {
@@ -166,24 +177,16 @@ func ResNetCifar10(layerNum int, imageID int) {
 	}
 	context := NewContext(encoder, encryptor, decryptor, sk, pk, btp14, btp13, btp12, rtk, rlk, evaluator, &params)
 
-	value := make([]complex128, n)
-	for i := range value {
-		if i < 100 {
-			value[i] = complex(float64(i), 0)
-		} else {
-			value[i] = complex(0, 0)
-		}
-	}
-	plaintext := hefloat.NewPlaintext(params, 16)
-	encoder.Encode(value, plaintext)
-	cipher, _ := encryptor.EncryptNew(plaintext)
-	ct := sumSlot(cipher, 6, 1, context)
-	DecryptPrint(params, ct, *decryptor, *encoder)
-
 	cnn := NewTensorCipherFormData(1, 32, 32, 3, 3, init_p, logn, image, context)
 	fmt.Println("preprocess & encrypt inference image end")
+	// output files
+	file, _ = os.Create("log/resnet" + strconv.Itoa(layerNum) + "_cifar10_image" + strconv.Itoa(imageID) + ".txt")
+	log_writer := bufio.NewWriter(file)
 
-	cnn = compactGappedConvolution(cnn, co, st, fh, fw, convWgt[0], bnVar[0], bnWgt[0], epsilon, context)
+	//layer 0
+	cnn = compactGappedConvolutionPrint(cnn, 16, 1, fh, fw, convWgt[stage], bnVar[stage], bnWgt[stage], epsilon, context, stage, log_writer)
+	cnn = compactGappedBatchNormPrint(cnn, bnBias[stage], bnMean[stage], bnVar[stage], bnWgt[stage], epsilon, B, context, stage, log_writer)
+	cnn = approxReLUPrint(cnn, 13, log_writer, context, stage)
 	_ = cnn
 }
 
@@ -238,7 +241,7 @@ func ImportParametersCifar10(layerNum int) (linwgt []float64, linbias []float64,
 	// convolution parameters
 	ci = 3
 	co = 16
-	ReadLinesIdx("pretrained_parameters/"+dir+"/conv1_weight.txt", convwgt, fh*fw*ci*co, num_c)
+	ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/conv1_weight.txt", convwgt, fh*fw*ci*co, num_c)
 	num_c++
 
 	// convolution parameters
@@ -261,7 +264,7 @@ func ImportParametersCifar10(layerNum int) (linwgt []float64, linbias []float64,
 			} else {
 				ci = 64
 			}
-			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_conv1_weight.txt", convwgt, fh*fw*ci*co, num_c)
+			ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_conv1_weight.txt", convwgt, fh*fw*ci*co, num_c)
 			num_c++
 
 			// ci setting
@@ -272,20 +275,20 @@ func ImportParametersCifar10(layerNum int) (linwgt []float64, linbias []float64,
 			} else if j == 3 {
 				ci = 64
 			}
-			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_conv2_weight.txt", convwgt, fh*fw*ci*co, num_c)
+			ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_conv2_weight.txt", convwgt, fh*fw*ci*co, num_c)
 			num_c++
 		}
 	}
 
 	// batch_normalization parameters
 	ci = 16
-	ReadLinesIdx("pretrained_parameters/"+dir+"/bn1_bias.txt", bnbias, ci, num_b)
+	ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/bn1_bias.txt", bnbias, ci, num_b)
 	num_b++
-	ReadLinesIdx("pretrained_parameters/"+dir+"/bn1_running_mean.txt", bnmean, ci, num_m)
+	ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/bn1_running_mean.txt", bnmean, ci, num_m)
 	num_m++
-	ReadLinesIdx("pretrained_parameters/"+dir+"/bn1_running_var.txt", bnvar, ci, num_v)
+	ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/bn1_running_var.txt", bnvar, ci, num_v)
 	num_v++
-	ReadLinesIdx("pretrained_parameters/"+dir+"/bn1_weight.txt", bnwgt, ci, num_w)
+	ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/bn1_weight.txt", bnwgt, ci, num_w)
 	num_w++
 
 	// batch_normalization parameters
@@ -299,33 +302,33 @@ func ImportParametersCifar10(layerNum int) (linwgt []float64, linbias []float64,
 		}
 
 		for k := 0; k <= endNum; k++ {
-			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_bias.txt", bnbias, ci, num_b)
+			ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_bias.txt", bnbias, ci, num_b)
 			num_b++
-			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_running_mean.txt", bnmean, ci, num_m)
+			ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_running_mean.txt", bnmean, ci, num_m)
 			num_m++
-			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_running_var.txt", bnvar, ci, num_v)
+			ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_running_var.txt", bnvar, ci, num_v)
 			num_v++
-			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_weight.txt", bnwgt, ci, num_w)
+			ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn1_weight.txt", bnwgt, ci, num_w)
 			num_w++
-			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_bias.txt", bnbias, ci, num_b)
+			ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_bias.txt", bnbias, ci, num_b)
 			num_b++
-			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_running_mean.txt", bnmean, ci, num_m)
+			ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_running_mean.txt", bnmean, ci, num_m)
 			num_m++
-			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_running_var.txt", bnvar, ci, num_v)
+			ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_running_var.txt", bnvar, ci, num_v)
 			num_v++
-			ReadLinesIdx("pretrained_parameters/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_weight.txt", bnwgt, ci, num_w)
+			ReadLinesIdx("parameters/resnet_pretrained/"+dir+"/layer"+strconv.Itoa(j)+"_"+strconv.Itoa(k)+"_bn2_weight.txt", bnwgt, ci, num_w)
 			num_w++
 		}
 	}
 	// FC layer
-	file, err := os.Open("pretrained_parameters/" + dir + "/linear_weight.txt")
+	file, err := os.Open("parameters/resnet_pretrained/" + dir + "/linear_weight.txt")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer file.Close()
 	in := bufio.NewScanner(file)
 	linwgt = ReadLines(in, linwgt, 10*64)
-	file, err = os.Open("pretrained_parameters/" + dir + "/linear_bias.txt")
+	file, err = os.Open("parameters/resnet_pretrained/" + dir + "/linear_bias.txt")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -360,9 +363,6 @@ func DecryptPrint(params hefloat.Parameters, ciphertext *rlwe.Ciphertext, decryp
 
 	fmt.Println("Max, Min value: ", max, " ", min)
 	fmt.Println()
-
-	return
-
 }
 
 func ReadLinesIdx(fileName string, storeVal [][]float64, lineNum int, idx int) {
