@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"runtime"
 	"sync"
+	"time"
 
 	"bufio"
 	"log"
@@ -14,8 +15,150 @@ import (
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/he/hefloat"
 	"github.com/tuneinsight/lattigo/v5/he/hefloat/bootstrapping"
-	"github.com/tuneinsight/lattigo/v5/utils"
 )
+
+/*
+func ResNetCifar10Multiple(layerNum, startImageId, endImageId int) {
+	//CPU full power
+	runtime.GOMAXPROCS(runtime.NumCPU()) // CPU 개수를 구한 뒤 사용할 최대 CPU 개수 설정
+	fmt.Println("Maximum number of CPUs: ", runtime.GOMAXPROCS(0))
+	numThreads := endImageId - startImageId + 1
+	//check layernumber
+	if !(layerNum == 20 || layerNum == 32 || layerNum == 44 || layerNum == 56 || layerNum == 110) {
+		fmt.Println("layer_num is not correct")
+		os.Exit(1)
+	}
+
+	//ckks parameter init
+	ckksParams := CNN_Cifar10_Parameters
+	initparams, err := hefloat.NewParametersFromLiteral(ckksParams.SchemeParams)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("ckks parameter init end")
+
+	//boot parameter init
+	//Todo : not RS-Bootstrapping yet
+
+	bootParams14, bootParams13, bootParams12 := ckksParams.BootstrappingParams, ckksParams.BootstrappingParams, ckksParams.BootstrappingParams
+	//bootParams14.LogSlots, bootParams13.LogSlots, bootParams12.LogSlots = utils.Pointy(14), utils.Pointy(13), utils.Pointy(12)
+	btpParams14, err := bootstrapping.NewParametersFromLiteral(initparams, bootParams14)
+	if err != nil {
+		panic(err)
+	}
+	btpParams13, err := bootstrapping.NewParametersFromLiteral(initparams, bootParams13)
+	if err != nil {
+		panic(err)
+	}
+	btpParams12, err := bootstrapping.NewParametersFromLiteral(initparams, bootParams12)
+	if err != nil {
+		panic(err)
+	}
+	btpParams12.SlotsToCoeffsParameters.Scaling, btpParams13.SlotsToCoeffsParameters.Scaling,
+		btpParams14.SlotsToCoeffsParameters.Scaling = new(big.Float).SetFloat64(0.5), new(big.Float).SetFloat64(0.5), new(big.Float).SetFloat64(0.5)
+
+	//bootParams14 := ckksParams.BootstrappingParams
+	//btpParams14, err := bootstrapping.NewParametersFromLiteral(params,bootParams14)
+	fmt.Println("bootstrapping parameter init end")
+
+	initkgen := rlwe.NewKeyGenerator(initparams)
+	initsk := initkgen.GenSecretKeyNew()
+
+	//generate bootstrapper
+	var wg sync.WaitGroup
+	wg.Add(3)
+	btp14 := make([]*bootstrapping.Evaluator,numThreads)
+	btp13 := make([]*bootstrapping.Evaluator,numThreads)
+	btp12 := make([]*bootstrapping.Evaluator,numThreads)
+	var sk *rlwe.SecretKey
+	for i := 0; i < numThreads; i++ {
+		go func() {
+			defer wg.Done()
+			btpevk14, sk_, _ := btpParams14.GenEvaluationKeys(initsk)
+			btp14[i], _ = bootstrapping.NewEvaluator(btpParams14, btpevk14)
+			sk = sk_
+		}()
+		go func() {
+			defer wg.Done()
+			btpevk13, _, _ := btpParams13.GenEvaluationKeys(initsk)
+			btp13[i], _ = bootstrapping.NewEvaluator(btpParams13, btpevk13)
+		}()
+		go func() {
+			defer wg.Done()
+			btpevk12, _, _ := btpParams12.GenEvaluationKeys(initsk)
+			btp12[i], _ = bootstrapping.NewEvaluator(btpParams12, btpevk12)
+		}()
+		wg.Wait()
+	}
+
+	fmt.Println("generated bootstrapper end")
+
+	params := *btp14[0].GetParameters()
+	kgen := rlwe.NewKeyGenerator(params)
+	pk := kgen.GenPublicKeyNew(sk)
+
+	// generate keys - Rotating key
+	convRot := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33,
+		34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
+		56, 57, 58, 59, 60, 61, 62, 63, 64, 66, 84, 124, 128, 132, 256, 512, 959, 960, 990, 991, 1008,
+		1023, 1024, 1036, 1064, 1092, 1952, 1982, 1983, 2016, 2044, 2047, 2048, 2072, 2078, 2100, 3007, 3024, 3040, 3052, 3070, 3071, 3072, 3080, 3108, 4031,
+		4032, 4062, 4063, 4095, 4096, 5023, 5024, 5054, 5055, 5087, 5118, 5119, 5120, 6047, 6078, 6079, 6111, 6112, 6142, 6143, 6144, 7071, 7102, 7103, 7135,
+		7166, 7167, 7168, 8095, 8126, 8127, 8159, 8190, 8191, 8192, 9149, 9183, 9184, 9213, 9215, 9216, 10173, 10207, 10208, 10237, 10239, 10240, 11197, 11231,
+		11232, 11261, 11263, 11264, 12221, 12255, 12256, 12285, 12287, 12288, 13214, 13216, 13246, 13278, 13279, 13280, 13310, 13311, 13312, 14238, 14240,
+		14270, 14302, 14303, 14304, 14334, 14335, 15262, 15264, 15294, 15326, 15327, 15328, 15358, 15359, 15360, 16286, 16288, 16318, 16350, 16351, 16352,
+		16382, 16383, 16384, 17311, 17375, 18335, 18399, 18432, 19359, 19423, 20383, 20447, 20480, 21405, 21406, 21437, 21469, 21470, 21471, 21501, 21504,
+		22429, 22430, 22461, 22493, 22494, 22495, 22525, 22528, 23453, 23454, 23485, 23517, 23518, 23519, 23549, 24477, 24478, 24509, 24541, 24542, 24543,
+		24573, 24576, 25501, 25565, 25568, 25600, 26525, 26589, 26592, 26624, 27549, 27613, 27616, 27648, 28573, 28637, 28640, 28672, 29600, 29632, 29664,
+		29696, 30624, 30656, 30688, 30720, 31648, 31680, 31712, 31743, 31744, 31774, 32636, 32640, 32644, 32672, 32702, 32704, 32706, 32735,
+		32736, 32737, 32759, 32760, 32761, 32762, 32763, 32764, 32765, 32766, 32767}
+	galEls := make([]uint64, len(convRot))
+	for i, x := range convRot {
+		galEls[i] = params.GaloisElement(x)
+	}
+	galEls = append(galEls, params.GaloisElementForComplexConjugation())
+	rlk := kgen.GenRelinearizationKeyNew(sk)
+	var rtk []*rlwe.GaloisKey = make([]*rlwe.GaloisKey, len(galEls))
+	wg.Add(len(galEls))
+	for i := range galEls {
+		i := i
+
+		go func() {
+			defer wg.Done()
+			kgen_ := rlwe.NewKeyGenerator(params)
+			rtk[i] = kgen_.GenGaloisKeyNew(galEls[i], sk)
+		}()
+	}
+	wg.Wait()
+	evk := rlwe.NewMemEvaluationKeySet(rlk, rtk...)
+
+	//generate -or/er
+	encryptor := rlwe.NewEncryptor(params, pk)
+	decryptor := rlwe.NewDecryptor(params, sk)
+	encoder := hefloat.NewEncoder(params)
+	evaluator := hefloat.NewEvaluator(params, evk)
+	fmt.Println("generate Evaluator end")
+
+	context := NewContext(encoder, encryptor, decryptor, sk, pk, btp14, btp13, btp12, rtk, rlk, evaluator, &params)
+	// load inference image
+	var file *os.File
+	file, err := os.Open("testFiles/test_values.txt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+	in := bufio.NewScanner(file)
+	SkipLines(in, 32*32*3*imageID)
+	var image []float64
+	image = ReadLines(in, image, 32*32*3)
+
+	//result file init
+	var result_file *os.File
+	result_file, _ = os.Create("result/resnet" + strconv.Itoa(layerNum) + "_cifar10_label" + strconv.Itoa(imageID) + ".txt")
+	outShare := bufio.NewWriter(result_file)
+	_ = outShare
+	fmt.Println("Resnet-CKKS result name: ", result_file.Name())
+}
+*/
 
 func ResNetCifar10(layerNum int, imageID int) {
 	//CPU full power
@@ -48,37 +191,71 @@ func ResNetCifar10(layerNum int, imageID int) {
 
 	//ckks parameter init
 	ckksParams := CNN_Cifar10_Parameters
-	params, err := hefloat.NewParametersFromLiteral(ckksParams.SchemeParams)
+	initparams, err := hefloat.NewParametersFromLiteral(ckksParams.SchemeParams)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println("ckks parameter init end")
 
 	//boot parameter init
-	bootParams14, bootParams13, bootParams12 := ckksParams.BootstrappingParams, ckksParams.BootstrappingParams, ckksParams.BootstrappingParams
 	//Todo : not RS-Bootstrapping yet
-	bootParams14.LogSlots, bootParams13.LogSlots, bootParams12.LogSlots = utils.Pointy(15), utils.Pointy(15), utils.Pointy(15)
-	btpParams14, err := bootstrapping.NewParametersFromLiteral(params, bootParams14)
+
+	bootParams14, bootParams13, bootParams12 := ckksParams.BootstrappingParams, ckksParams.BootstrappingParams, ckksParams.BootstrappingParams
+	//bootParams14.LogSlots, bootParams13.LogSlots, bootParams12.LogSlots = utils.Pointy(14), utils.Pointy(13), utils.Pointy(12)
+	btpParams14, err := bootstrapping.NewParametersFromLiteral(initparams, bootParams14)
 	if err != nil {
 		panic(err)
 	}
-	btpParams13, err := bootstrapping.NewParametersFromLiteral(params, bootParams13)
+	btpParams13, err := bootstrapping.NewParametersFromLiteral(initparams, bootParams13)
 	if err != nil {
 		panic(err)
 	}
-	btpParams12, err := bootstrapping.NewParametersFromLiteral(params, bootParams12)
+	btpParams12, err := bootstrapping.NewParametersFromLiteral(initparams, bootParams12)
 	if err != nil {
 		panic(err)
 	}
 	btpParams12.SlotsToCoeffsParameters.Scaling, btpParams13.SlotsToCoeffsParameters.Scaling,
 		btpParams14.SlotsToCoeffsParameters.Scaling = new(big.Float).SetFloat64(0.5), new(big.Float).SetFloat64(0.5), new(big.Float).SetFloat64(0.5)
+
+	//bootParams14 := ckksParams.BootstrappingParams
+	//btpParams14, err := bootstrapping.NewParametersFromLiteral(params,bootParams14)
 	fmt.Println("bootstrapping parameter init end")
+
 	// generate keys
 	//fmt.Println("generate keys")
 	//keytime := time.Now()
+	initkgen := rlwe.NewKeyGenerator(initparams)
+	initsk := initkgen.GenSecretKeyNew()
+
+	//generate bootstrapper
+	var wg sync.WaitGroup
+	wg.Add(3)
+	var btp14, btp13, btp12 *bootstrapping.Evaluator
+	var sk *rlwe.SecretKey
+	go func() {
+		defer wg.Done()
+		btpevk14, sk_, _ := btpParams14.GenEvaluationKeys(initsk)
+		btp14, _ = bootstrapping.NewEvaluator(btpParams14, btpevk14)
+		sk = sk_
+	}()
+	go func() {
+		defer wg.Done()
+		btpevk13, _, _ := btpParams13.GenEvaluationKeys(initsk)
+		btp13, _ = bootstrapping.NewEvaluator(btpParams13, btpevk13)
+	}()
+	go func() {
+		defer wg.Done()
+		btpevk12, _, _ := btpParams12.GenEvaluationKeys(initsk)
+		btp12, _ = bootstrapping.NewEvaluator(btpParams12, btpevk12)
+	}()
+	wg.Wait()
+	//memory over
+	fmt.Println("generated bootstrapper end")
+
+	params := *btp14.GetParameters()
 	kgen := rlwe.NewKeyGenerator(params)
-	sk := kgen.GenSecretKeyNew()
 	pk := kgen.GenPublicKeyNew(sk)
+
 	// generate keys - Rotating key
 	convRot := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33,
 		34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
@@ -97,12 +274,9 @@ func ResNetCifar10(layerNum int, imageID int) {
 	for i, x := range convRot {
 		galEls[i] = params.GaloisElement(x)
 	}
-	//ellapse := time.Since(keytime)
-	//fmt.Printf("GaloisElement time end : %s\n", ellapse)
-
+	galEls = append(galEls, params.GaloisElementForComplexConjugation())
 	rlk := kgen.GenRelinearizationKeyNew(sk)
 	var rtk []*rlwe.GaloisKey = make([]*rlwe.GaloisKey, len(galEls))
-	var wg sync.WaitGroup
 	wg.Add(len(galEls))
 	for i := range galEls {
 		i := i
@@ -114,43 +288,16 @@ func ResNetCifar10(layerNum int, imageID int) {
 		}()
 	}
 	wg.Wait()
-	//rtk = kgen.GenGaloisKeysNew(galEls, sk)
 	evk := rlwe.NewMemEvaluationKeySet(rlk, rtk...)
-	fmt.Println(evk.GaloisKeys)
-	//ellapse = time.Since(keytime)
-	//fmt.Println("generate key end")
-	//fmt.Printf("time end : %s\n", ellapse)
 
-	//generate -or/er
+	//generate -er
 	encryptor := rlwe.NewEncryptor(params, pk)
 	decryptor := rlwe.NewDecryptor(params, sk)
 	encoder := hefloat.NewEncoder(params)
 	evaluator := hefloat.NewEvaluator(params, evk)
 	fmt.Println("generate Evaluator end")
 
-	_, _, _, _ = encryptor, decryptor, encoder, evaluator
-
-	//generate bootstrapper
-	wg.Add(3)
-	var btp14, btp13, btp12 *bootstrapping.Evaluator
-	go func() {
-		defer wg.Done()
-		btpevk14, _, _ := btpParams14.GenEvaluationKeys(sk)
-		btp14, _ = bootstrapping.NewEvaluator(btpParams14, btpevk14)
-	}()
-	go func() {
-		defer wg.Done()
-		btpevk13, _, _ := btpParams13.GenEvaluationKeys(sk)
-		btp13, _ = bootstrapping.NewEvaluator(btpParams13, btpevk13)
-	}()
-	go func() {
-		defer wg.Done()
-		btpevk12, _, _ := btpParams12.GenEvaluationKeys(sk)
-		btp12, _ = bootstrapping.NewEvaluator(btpParams12, btpevk12)
-	}()
-	wg.Wait()
-
-	fmt.Println("generated bootstrapper end")
+	context := NewContext(encoder, encryptor, decryptor, sk, pk, btp14, btp13, btp12, rtk, rlk, evaluator, &params)
 
 	//Resnet parameter init
 	co, st, fh, fw := 0, 0, 3, 3
@@ -163,7 +310,6 @@ func ResNetCifar10(layerNum int, imageID int) {
 	epsilon := 0.00001
 	B := 40.0
 	linWgt, linBias, convWgt, bnBias, bnMean, bnVar, bnWgt, endNum := ImportParametersCifar10(layerNum)
-	_, _, _, _, _, _, _ = co, st, logp, logq, linWgt, linBias, endNum
 
 	//preprocess inference image
 	for len(image) < n {
@@ -175,19 +321,123 @@ func ResNetCifar10(layerNum int, imageID int) {
 	for i := 0; i < n; i++ {
 		image[i] /= B
 	}
-	context := NewContext(encoder, encryptor, decryptor, sk, pk, btp14, btp13, btp12, rtk, rlk, evaluator, &params)
+	// result image label
+	var buffer []int
+	file, err = os.Open("testFiles/test_label.txt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+	in = bufio.NewScanner(file)
+	SkipLines(in, imageID)
+	buffer = ReadLinesInt(in, buffer, 1)
+	imageLabel := buffer[0]
 
-	cnn := NewTensorCipherFormData(1, 32, 32, 3, 3, init_p, logn, image, context)
+	cnn := NewTensorCipherFormData(1, 32, 32, 3, 3, init_p, logn, logq, image, context)
 	fmt.Println("preprocess & encrypt inference image end")
 	// output files
 	file, _ = os.Create("log/resnet" + strconv.Itoa(layerNum) + "_cifar10_image" + strconv.Itoa(imageID) + ".txt")
 	log_writer := bufio.NewWriter(file)
 
+	fmt.Println("drop level")
+	evaluator.DropLevel(cnn.cipher_, 11)
+
+	totalTimeStart := time.Now() // time start
 	//layer 0
 	cnn = compactGappedConvolutionPrint(cnn, 16, 1, fh, fw, convWgt[stage], bnVar[stage], bnWgt[stage], epsilon, context, stage, log_writer)
 	cnn = compactGappedBatchNormPrint(cnn, bnBias[stage], bnMean[stage], bnVar[stage], bnWgt[stage], epsilon, B, context, stage, log_writer)
+	evaluator.SetScale(cnn.cipher_, rlwe.NewScale(1<<logp))
 	cnn = approxReLUPrint(cnn, 13, log_writer, context, stage)
-	_ = cnn
+	// large block loop
+	for largeBlockID := 0; largeBlockID < 3; largeBlockID++ { // layer 1_x, 2_x, 3_x
+		if largeBlockID == 0 {
+			co = 16
+		} else if largeBlockID == 1 {
+			co = 32
+		} else if largeBlockID == 2 {
+			co = 64
+		}
+
+		// small block loop
+		for blockID := 0; blockID <= endNum; blockID++ { // 0 ~ 2/4/6/8/17
+			stage = 2*((endNum+1)*largeBlockID+blockID) + 1
+			fmt.Println("layer ", stage)
+			tempCnn := TensorCipher{k_: cnn.k_, h_: cnn.h_, w_: cnn.w_, c_: cnn.c_, t_: cnn.t_, p_: cnn.p_, logn_: cnn.logn_, cipher_: cnn.cipher_.CopyNew()}
+			if largeBlockID >= 1 && blockID == 0 {
+				st = 2
+			} else {
+				st = 1
+			}
+			cnn = compactGappedConvolutionPrint(cnn, co, st, fh, fw, convWgt[stage], bnVar[stage], bnWgt[stage], epsilon, context, stage, log_writer)
+			cnn = compactGappedBatchNormPrint(cnn, bnBias[stage], bnMean[stage], bnVar[stage], bnWgt[stage], epsilon, B, context, stage, log_writer)
+			if largeBlockID == 0 {
+				cnn = bootstrapImaginaryPrint(cnn, context, 14, stage, log_writer)
+			} else if largeBlockID == 1 {
+				cnn = bootstrapImaginaryPrint(cnn, context, 13, stage, log_writer)
+			} else if largeBlockID == 2 {
+				cnn = bootstrapImaginaryPrint(cnn, context, 12, stage, log_writer)
+			}
+			cnn = approxReLUPrint(cnn, 13, log_writer, context, stage)
+
+			stage = 2*((endNum+1)*largeBlockID+blockID) + 2
+			fmt.Println("layer ", stage)
+			st = 1
+
+			cnn = compactGappedConvolutionPrint(cnn, co, st, fh, fw, convWgt[stage], bnVar[stage], bnWgt[stage], epsilon, context, stage, log_writer)
+			cnn = compactGappedBatchNormPrint(cnn, bnBias[stage], bnMean[stage], bnVar[stage], bnWgt[stage], epsilon, B, context, stage, log_writer)
+			if largeBlockID >= 1 && blockID == 0 {
+				tempCnn = downsamplingPrint(tempCnn, context, stage, log_writer)
+			}
+			cnn = cipherAddPrint(cnn, tempCnn, context, stage, log_writer) // cipheradd
+			if largeBlockID == 0 {
+				cnn = bootstrapImaginaryPrint(cnn, context, 14, stage, log_writer)
+			} else if largeBlockID == 1 {
+				cnn = bootstrapImaginaryPrint(cnn, context, 13, stage, log_writer)
+			} else if largeBlockID == 2 {
+				cnn = bootstrapImaginaryPrint(cnn, context, 12, stage, log_writer)
+			}
+			cnn = approxReLUPrint(cnn, 13, log_writer, context, stage)
+		}
+	}
+	cnn = averagepoolingPrint(cnn, B, context, log_writer)                       // average pooling
+	cnn = fullyConnectedPrint(cnn, linWgt, linBias, 10, 64, context, log_writer) // full connected layer
+
+	elapse := time.Since(totalTimeStart)
+	fmt.Printf("Done in %s \n", elapse)
+
+	// final text file print
+	decryptPrintTxt(cnn.cipher_, log_writer, context, 10)
+
+	rtnVec := make([]complex128, params.LogMaxSlots())
+	encoder.Decode(decryptor.DecryptNew(cnn.cipher_), rtnVec)
+	fmt.Printf("(")
+	log_writer.WriteString("(")
+	for i := 0; i < 9; i++ {
+		fmt.Print(rtnVec[i], ", ")
+		log_writer.WriteString(fmt.Sprintf("%6.10f", rtnVec[i]) + ", ")
+	}
+	fmt.Print(rtnVec[9], ")\n")
+	log_writer.WriteString(fmt.Sprintf("%6.10f", rtnVec[9]) + ")\n")
+	fmt.Println("total time: ", elapse)
+	log_writer.WriteString("total time: " + elapse.String() + "\n")
+
+	label := 0
+	maxScore := -100.0
+	for i := 0; i < 10; i++ {
+		if maxScore < real(rtnVec[i]) {
+			label = i
+			maxScore = real(rtnVec[i])
+		}
+	}
+	fmt.Println("image label: ", imageLabel)
+	fmt.Println("inferred label: ", label)
+	fmt.Println("max score: ", maxScore)
+	log_writer.WriteString("image label: " + strconv.Itoa(imageLabel) + "\n")
+	log_writer.WriteString("inferred label: " + strconv.Itoa(label) + "\n")
+	log_writer.WriteString("max score: " + fmt.Sprintf("%f", maxScore) + "\n")
+	log_writer.Flush()
+	outShare.WriteString("image_id: " + strconv.Itoa(imageID) + ", image label: " + strconv.Itoa(imageLabel) + ", inferred label: " + strconv.Itoa(label) + "\n")
+	outShare.Flush()
 }
 
 func ImportParametersCifar10(layerNum int) (linwgt []float64, linbias []float64, convwgt [][]float64, bnbias [][]float64, bnmean [][]float64, bnvar [][]float64, bnwgt [][]float64, endNum int) {
@@ -393,6 +643,17 @@ func ReadLines(scanner *bufio.Scanner, storeVal []float64, lineNum int) []float6
 		scanner.Scan()
 		s := scanner.Text()
 		p, _ := strconv.ParseFloat(s, 64)
+		storeVal = append(storeVal, p)
+	}
+
+	return storeVal
+}
+
+func ReadLinesInt(scanner *bufio.Scanner, storeVal []int, lineNum int) []int {
+	for i := 0; i < lineNum; i++ {
+		scanner.Scan()
+		s := scanner.Text()
+		p, _ := strconv.Atoi(s)
 		storeVal = append(storeVal, p)
 	}
 

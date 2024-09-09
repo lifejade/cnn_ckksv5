@@ -25,14 +25,14 @@ type TensorCipher struct {
 	cipher_ *rlwe.Ciphertext
 }
 
-func NewTensorCipherFormData(k, h, w, c, t, p, logn int, data []float64, context Context) TensorCipher {
+func NewTensorCipherFormData(k, h, w, c, t, p, logn, logq int, data []float64, context Context) TensorCipher {
 	plaintext := hefloat.NewPlaintext(*context.params_, context.params_.MaxLevel())
+	plaintext.Scale = rlwe.NewScale(math.Pow(2.0, float64(logq)))
 	context.encoder_.Encode(data, plaintext)
 	cipher, err := context.encryptor_.EncryptNew(plaintext)
 	if err != nil {
 		panic(err)
 	}
-
 	return NewTensorCipher(k, h, w, c, t, p, logn, cipher)
 }
 
@@ -90,12 +90,10 @@ func sumSlot(in *rlwe.Ciphertext, addSize, gap int, context Context) (out *rlwe.
 	sum := ctZero(context)
 
 	logsize := int(math.Log2(float64(addSize)))
-	fmt.Println(logsize)
 	for i := 0; i < logsize; i++ {
 
 		if int(addSize/int(math.Pow(2, float64(i))))%2 == 1 {
 			temp, _ := context.eval_.RotateNew(out, int(addSize/int(math.Pow(2, float64(i+1))))*int(math.Pow(2, float64(i+1)))*gap)
-			fmt.Println(int(addSize / int(math.Pow(2, float64(i)))))
 			context.eval_.Add(sum, temp, sum)
 		}
 
@@ -432,7 +430,7 @@ func bootstrapImaginaryPrint(cnnIn TensorCipher, context Context, logSlots int, 
 	elapse := time.Since(timeStart)
 
 	cnnOut = cnnIn
-	cnnOut.cipher_ = temp
+	cnnOut.cipher_ = result
 
 	fmt.Printf("time: %s \n", elapse)
 	fmt.Print("bootstrapping ", stage, " result\n")
@@ -447,6 +445,322 @@ func bootstrapImaginaryPrint(cnnIn TensorCipher, context Context, logSlots int, 
 	return cnnOut
 }
 
+func downsamplingPrint(cnnIn TensorCipher, context Context, stage int, output *bufio.Writer) (cnnOut TensorCipher) {
+
+	timeStart := time.Now()
+	cnnOut = downsampling(cnnIn, context)
+	elapse := time.Since(timeStart)
+
+	fmt.Printf("time: %s \n", elapse)
+	fmt.Print("downsampling ", stage, " result\n")
+	output.WriteString("time: " + elapse.String() + "\n")
+	output.WriteString("downsampling " + strconv.Itoa(stage) + " result\n")
+	output.Flush()
+
+	// decryptPrint(cnnOut.cipher_, context, 4)
+	decryptPrintTxt(cnnOut.cipher_, output, context, 4)
+	printParms(cnnOut)
+
+	return cnnOut
+
+}
+
+func downsampling(cnnIn TensorCipher, context Context) (cnnOut TensorCipher) {
+
+	// parameter setting
+	ki, hi, wi, ci, ti, logn := cnnIn.k_, cnnIn.h_, cnnIn.w_, cnnIn.c_, cnnIn.t_, cnnIn.logn_
+	n := 1 << logn
+	ko, ho, wo, co, to := 2*ki, hi/2, wi/2, 2*ci, ti/2
+	po := pow2(floorToInt(math.Log2(float64(n) / float64(ko*ko*ho*wo*to))))
+	eval := *context.eval_
+
+	if ti%8 != 0 {
+		fmt.Println("ti is not multiple of 8")
+		os.Exit(1)
+	} else if hi%2 != 0 {
+		fmt.Println("hi is not even")
+		os.Exit(1)
+	} else if wi%2 != 0 {
+		fmt.Println("wi is not even")
+		os.Exit(1)
+	} else if n%po != 0 {
+		fmt.Println("n is not divisible by po") // check if po | n
+		os.Exit(1)
+	}
+
+	// selecting tensor vector setting
+	selectOneVec := make([][][]float64, ki)
+	for w1 := 0; w1 < ki; w1++ {
+		selectOneVec[w1] = make([][]float64, ti)
+		for w2 := 0; w2 < ti; w2++ {
+			selectOneVec[w1][w2] = make([]float64, 1<<logn)
+			for v4 := 0; v4 < 1<<logn; v4++ {
+				j5, j6, i7 := (v4%(ki*ki*hi*wi))/(ki*wi), v4%(ki*wi), v4/(ki*ki*hi*wi)
+				if v4 < ki*ki*hi*wi*ti && (j5/ki)%2 == 0 && (j6/ki)%2 == 0 && (j5%ki) == w1 && i7 == w2 {
+					selectOneVec[w1][w2][v4] = 1.0
+				} else {
+					selectOneVec[w1][w2][v4] = 0.0
+				}
+			}
+		}
+	}
+
+	var ct, sum, temp *rlwe.Ciphertext
+	ct = cnnIn.cipher_
+
+	for w1 := 0; w1 < ki; w1++ {
+		for w2 := 0; w2 < ti; w2++ {
+			temp = ct.CopyNew()
+			eval.MulRelin(temp, selectOneVec[w1][w2], temp)
+
+			w3, w4, w5 := ((ki*w2+w1)%(2*ko))/2, (ki*w2+w1)%2, (ki*w2+w1)/(2*ko)
+			eval.Rotate(temp, ki*ki*hi*wi*w2+ki*wi*w1-ko*ko*ho*wo*w5-ko*wo*w3-ki*w4-ko*ko*ho*wo*(ti/8), temp)
+			// RotatePrintCIFAR10Downsampling(temp, ki*ki*hi*wi*w2+ki*wi*w1-ko*ko*ho*wo*w5-ko*wo*w3-ki*w4-ko*ko*ho*wo*(ti/8), temp, &eval, ki, hi, wi, ci, ti, cnnIn.p_)
+			if w1 == 0 && w2 == 0 {
+				sum = temp.CopyNew()
+			} else {
+				eval.Add(sum, temp, sum)
+			}
+		}
+	}
+	(*context.eval_).RescaleTo(sum, context.params_.DefaultScale(), sum) // plus rescale
+	ct = sum.CopyNew()
+
+	sum = ct.CopyNew()
+	for u6 := 1; u6 < po; u6++ {
+		temp = ct.CopyNew()
+		eval.Rotate(temp, -(n/po)*u6, temp)
+		// RotatePrintCIFAR10Downsampling(temp, -(n/po)*u6, temp, &eval, ki, hi, wi, ci, ti, cnnIn.p_)
+		eval.Add(sum, temp, sum)
+	}
+	ct = sum.CopyNew()
+
+	cnnOut = TensorCipher{
+		logn_:   logn,
+		k_:      ko,
+		h_:      ho,
+		w_:      wo,
+		c_:      co,
+		t_:      to,
+		p_:      po,
+		cipher_: ct,
+	}
+	return cnnOut
+
+}
+
+func cipherAddPrint(cnnIn1 TensorCipher, cnnIn2 TensorCipher, context Context, stage int, output *bufio.Writer) (cnnOut TensorCipher) {
+
+	timeStart := time.Now()
+	k1, h1, w1, c1, t1, p1, logn1 := cnnIn1.k_, cnnIn1.h_, cnnIn1.w_, cnnIn1.c_, cnnIn1.t_, cnnIn1.p_, cnnIn1.logn_
+	k2, h2, w2, c2, t2, p2, logn2 := cnnIn2.k_, cnnIn2.h_, cnnIn2.w_, cnnIn2.c_, cnnIn2.t_, cnnIn2.p_, cnnIn2.logn_
+
+	if k1 != k2 || h1 != h2 || w1 != w2 || c1 != c2 || t1 != t2 || p1 != p2 || logn1 != logn2 {
+		fmt.Println("the parameters of cnn1 and cnn2 are not the same")
+		fmt.Println(k1, h1, w1, c1, t1, p1, logn1)
+		fmt.Println(k2, h2, w2, c2, t2, p2, logn2)
+		os.Exit(1)
+	}
+
+	evaluator := *context.eval_
+	temp, _ := evaluator.AddNew(cnnIn1.cipher_, cnnIn2.cipher_)
+	cnnOut = cnnIn1
+	cnnOut.cipher_ = temp
+	elapse := time.Since(timeStart)
+
+	fmt.Printf("time: %s \n", elapse)
+	fmt.Print("cipher add ", stage, " result\n")
+	output.WriteString("time: " + elapse.String() + "\n")
+	output.WriteString("cipher add " + strconv.Itoa(stage) + " result\n")
+	output.Flush()
+
+	// decryptPrint(cnnOut.cipher_, context, 4)
+	decryptPrintTxt(cnnOut.cipher_, output, context, 4)
+	printParms(cnnOut)
+
+	return cnnOut
+}
+
+func averagepoolingPrint(cnnIn TensorCipher, B float64, context Context, output *bufio.Writer) (cnnOut TensorCipher) {
+
+	timeStart := time.Now()
+	cnnOut = averagepooling(cnnIn, B, context)
+	elapse := time.Since(timeStart)
+
+	fmt.Printf("time: %s \n", elapse)
+	fmt.Print("average pooling result\n")
+	output.WriteString("time: " + elapse.String() + "\n")
+	output.WriteString("average pooling result\n")
+	output.Flush()
+
+	// decryptPrint(cnnOut.cipher_, context, 4)
+	decryptPrintTxt(cnnOut.cipher_, output, context, 4)
+	printParms(cnnOut)
+
+	return cnnOut
+
+}
+
+func averagepooling(cnnIn TensorCipher, B float64, context Context) (cnnOut TensorCipher) {
+
+	// parameter setting
+	ki, hi, wi, ci, ti, logn := cnnIn.k_, cnnIn.h_, cnnIn.w_, cnnIn.c_, cnnIn.t_, cnnIn.logn_
+	ko, ho, wo, co, to := 1, 1, 1, ci, ti
+	/*
+		if log2Int(hi) == -1 {
+			fmt.Println("hi is not power of two")
+			os.Exit(1)
+		} else if log2Int(wi) == -1 {
+			fmt.Println("wi is not power of two")
+			os.Exit(1)
+		}*/
+
+	var temp, sum *rlwe.Ciphertext
+	ct := cnnIn.cipher_
+	eval := *context.eval_
+	initScale := cnnIn.cipher_.Scale
+
+	// sum_hiwi
+	fmt.Println("sum hiwi")
+	for x := 0; x < int(log2IntPlusToll(float64(wi))); x++ {
+		temp = ct.CopyNew()
+		eval.Rotate(temp, pow2(x)*ki, temp)
+		// RotatePrintCIFAR10Avgpool(temp, pow2(x)*ki, temp, &eval)
+		eval.Add(ct, temp, ct)
+	}
+	for x := 0; x < int(log2IntPlusToll(float64(wi))); x++ {
+		temp = ct.CopyNew()
+		eval.Rotate(temp, pow2(x)*ki*ki*wi, temp)
+		// RotatePrintCIFAR10Avgpool(temp, pow2(x)*ki*ki*wi, temp, &eval)
+		eval.Add(ct, temp, ct)
+	}
+
+	// final
+	fmt.Println("final")
+	selectOne := make([]float64, 1<<logn)
+	zero := make([]float64, 1<<logn)
+	for s := 0; s < ki; s++ {
+		for u := 0; u < ti; u++ {
+			p := ki*u + s
+			temp = ct.CopyNew()
+			eval.Rotate(temp, -p*ki+ki*ki*hi*wi*u+ki*wi*s, temp)
+			// RotatePrintCIFAR10Avgpool(temp, -p*ki+ki*ki*hi*wi*u+ki*wi*s, temp, &eval)
+			copy(selectOne, zero)
+			for i := 0; i < ki; i++ {
+				selectOne[(ki*u+s)*ki+i] = B / float64(hi*wi)
+			}
+
+			eval.MulRelin(temp, selectOne, temp)
+			if u == 0 && s == 0 {
+				sum = temp.CopyNew() // double scaling factor
+			} else {
+				eval.Add(sum, temp, sum)
+			}
+		}
+	}
+	eval.RescaleTo(sum, initScale, sum) // if scale >= minScale/2, then rescale
+
+	cnnOut = TensorCipher{
+		logn_:   logn,
+		k_:      ko,
+		h_:      ho,
+		w_:      wo,
+		c_:      co,
+		t_:      to,
+		p_:      1,
+		cipher_: sum,
+	}
+	return cnnOut
+
+}
+
+func fullyConnectedPrint(cnnIn TensorCipher, matrix []float64, bias []float64, q, r int, context Context, output *bufio.Writer) (cnnOut TensorCipher) {
+
+	timeStart := time.Now()
+	cnnOut = matrixMultiplication(cnnIn, matrix, bias, q, r, context)
+	elapse := time.Since(timeStart)
+
+	fmt.Printf("time: %s \n", time.Since(timeStart))
+	fmt.Print("fully connected layer result\n")
+	output.WriteString("time: " + elapse.String() + "\n")
+	output.WriteString("fully connected layer result\n")
+	output.Flush()
+
+	// decryptPrint(cnnOut.cipher_, context, 4)
+	decryptPrintTxt(cnnOut.cipher_, output, context, 10)
+	printParms(cnnOut)
+
+	return cnnOut
+
+}
+
+func matrixMultiplication(cnnIn TensorCipher, matrix []float64, bias []float64, q, r int, context Context) (cnnOut TensorCipher) {
+
+	// parameter setting
+	ki, hi, wi, ci, ti, pi, logn := cnnIn.k_, cnnIn.h_, cnnIn.w_, cnnIn.c_, cnnIn.t_, cnnIn.p_, cnnIn.logn_
+	ko, ho, wo, co, to, po := ki, hi, wi, ci, ti, pi
+	eval := *context.eval_
+	initScale := cnnIn.cipher_.Scale
+
+	if len(matrix) != q*r {
+		fmt.Println("the size of matrix is not q*r")
+		os.Exit(1)
+	} else if len(bias) != q {
+		fmt.Println("the size of bias is not q")
+		os.Exit(1)
+	}
+
+	// generate matrix and bias
+	W := make([][]float64, q+r-1)
+	for i := 0; i < q+r-1; i++ {
+		W[i] = make([]float64, 1<<logn)
+	}
+	for i := 0; i < q; i++ {
+		for j := 0; j < r; j++ {
+			W[i-j+r-1][i] = matrix[i*r+j]
+			if i-j+r-1 < 0 || i-j+r-1 >= q+r-1 {
+				fmt.Println("i-j+r-1 is out of range")
+				os.Exit(1)
+			} else if i*r+j < 0 || i*r+j >= len(matrix) {
+				fmt.Println("i*r+j is out of range")
+				os.Exit(1)
+			}
+		}
+	}
+	b := make([]float64, 1<<logn)
+	for z := 0; z < q; z++ {
+		b[z] = bias[z]
+	}
+
+	// matrix multiplication
+	var temp, sum *rlwe.Ciphertext
+	ct := cnnIn.cipher_
+	for s := 0; s < q+r-1; s++ {
+		temp = ct.CopyNew()
+		eval.Rotate(temp, r-1-s, temp)
+		// RotatePrintCIFAR10FClayer(temp, r-1-s, temp, &eval)
+		eval.MulRelin(temp, W[s], temp)
+		if s == 0 {
+			sum = temp.CopyNew()
+		} else {
+			eval.Add(sum, temp, sum)
+		}
+	}
+	eval.RescaleTo(sum, initScale, sum)
+
+	cnnOut = TensorCipher{
+		logn_:   logn,
+		k_:      ko,
+		h_:      ho,
+		w_:      wo,
+		c_:      co,
+		t_:      to,
+		p_:      po,
+		cipher_: sum,
+	}
+	return cnnOut
+
+}
 func decryptPrintTxt(ciphertext *rlwe.Ciphertext, output *bufio.Writer, context Context, num int) {
 	params := *context.params_
 	decryptor := *context.decryptor_

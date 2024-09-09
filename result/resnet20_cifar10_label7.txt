@@ -1,0 +1,1 @@
+image_id: 7, image label: 6, inferred label: 6

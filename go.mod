@@ -2,7 +2,7 @@ module github.com/lifejade/cnn_ckksv5
 
 go 1.22.0
 
-require github.com/tuneinsight/lattigo/v5 v5.0.2 // indirect
+require github.com/tuneinsight/lattigo/v5 v5.0.2
 
 require (
 	github.com/ALTree/bigfloat v0.0.0-20220102081255-38c8b72a9924 // indirect

@@ -132,7 +132,7 @@ func MinimaxReLU(compNo, alpha int, deg []int, tree []Tree, finalScaledVal float
 		// fmt.Println("*******************************************")
 		// fmt.Println("               No: ", i)
 		cipherX = evalPolynomialIntegrate(cipherX, deg[i], tree[i], decompCoeff[i], context) // decompCoeff: unchanged
-		scaleinv.DecryptPrint(cipherX, context)
+		//scaleinv.DecryptPrint(cipherX, context)
 	}
 
 	// x(1+sgn(x))/2 from sgn(x)/2
