@@ -1,8 +1,10 @@
 package test
 
 import (
+	"fmt"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/lifejade/cnn_ckksv5/cnn"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
@@ -251,5 +253,65 @@ func Test_sub(t *testing.T) {
 	t.Logf("%6.10f %6.10f %6.10f %6.10f ... %6.10f %6.10f", result[0], result[1], result[2], result[3], result[n-2], result[n-1])
 
 	t.Logf("%d %6.10f, %d %6.10f", cipher.Level(), cipher.LogScale(), cipher2.Level(), cipher2.LogScale())
+
+}
+
+func Test_EncodeTime(t *testing.T) {
+
+	ckksParams := cnn.CNN_Cifar10_Parameters
+	//parameter init
+	params, err := hefloat.NewParametersFromLiteral(ckksParams.SchemeParams)
+	if err != nil {
+		panic(err)
+	} /*
+		btpParams, err := bootstrapping.NewParametersFromLiteral(params, ckksParams.BootstrappingParams)
+		if err != nil {
+			panic(err)
+		}
+		keygen_ := rlwe.NewKeyGenerator(params)
+		sk_ := keygen_.GenSecretKeyNew()
+		btpevk, sk, _ := btpParams.GenEvaluationKeys(sk_)
+		btp, _ := bootstrapping.NewEvaluator(btpParams, btpevk)
+		params = *btp.GetParameters()
+	*/
+	// generate classes
+	kgen := rlwe.NewKeyGenerator(params)
+	sk := kgen.GenSecretKeyNew()
+	pk := kgen.GenPublicKeyNew(sk)
+
+	n := 1 << params.LogMaxSlots()
+
+	rlk := kgen.GenRelinearizationKeyNew(sk)
+
+	evk := rlwe.NewMemEvaluationKeySet(rlk)
+	evaluator := hefloat.NewEvaluator(params, evk)
+
+	encryptor := rlwe.NewEncryptor(params, pk)
+	decryptor := rlwe.NewDecryptor(params, sk)
+	encoder := hefloat.NewEncoder(params)
+
+	_, _, _ = evaluator, encryptor, decryptor
+
+	value := make([]float64, n)
+	for i := range value {
+		value[i] = sampling.RandFloat64(-1, 1)
+	}
+	plaintext := hefloat.NewPlaintext(params, 2)
+	fmt.Println(plaintext.IsBatched)
+	fmt.Println(encoder.Prec())
+	startTime := time.Now()
+	encoder.Encode(value, plaintext)
+	elapse := time.Since(startTime)
+	fmt.Printf("%s\n", elapse)
+
+	for i := range value {
+		value[i] = float64(0.6)
+	}
+	plaintext2 := hefloat.NewPlaintext(params, 2)
+	encoder.FFT(value, params.LogN())
+	startTime = time.Now()
+	encoder.Encode(value, plaintext2)
+	elapse = time.Since(startTime)
+	fmt.Printf("%s\n", elapse)
 
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"sync"
 
 	"os"
 	"strconv"
@@ -42,17 +41,5 @@ func main() {
 		fmt.Println("args error")
 		os.Exit(0)
 	}
-
-	var wg sync.WaitGroup
-	n := endImageID - startImageID + 1
-	wg.Add(n)
-	for i := 0; i < n; i++ {
-		go func() {
-			defer wg.Done()
-			cnn.ResNetCifar10(layerNum, i+startImageID)
-		}()
-	}
-
-	wg.Wait()
-
+	cnn.ResNetCifar10MultipleImage(layerNum, startImageID, endImageID)
 }

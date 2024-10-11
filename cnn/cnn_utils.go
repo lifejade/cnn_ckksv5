@@ -47,7 +47,7 @@ func log2IntPlusToll(input float64) (log float64) {
 	return log
 }
 
-func ctZero(context Context) *rlwe.Ciphertext {
+func ctZero(context *Context) *rlwe.Ciphertext {
 	n := context.params_.LogMaxSlots()
 	zero := make([]complex128, n)
 	plain := hefloat.NewPlaintext(*context.params_, context.params_.MaxLevel())
